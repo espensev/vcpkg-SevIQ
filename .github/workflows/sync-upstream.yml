@@ -1,0 +1,66 @@
+name: Sync upstream vcpkg
+
+on:
+  schedule:
+    # Daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/microsoft/vcpkg.git || true
+          git fetch upstream master
+
+      - name: Check for new commits
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/master)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "Upstream is $BEHIND commits ahead"
+
+      - name: Merge upstream
+        if: steps.check.outputs.behind != '0'
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git merge upstream/master --no-edit; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push merged changes
+        if: steps.check.outputs.behind != '0' && steps.merge.outputs.conflict == 'false'
+        run: git push origin master
+
+      - name: Create PR on conflict
+        if: steps.merge.outputs.conflict == 'true'
+        run: |
+          BRANCH="sync-upstream/$(date +%Y%m%d)"
+          git checkout -b "$BRANCH"
+          git merge upstream/master --no-edit || true
+          git add -A
+          git commit -m "sync: merge upstream microsoft/vcpkg (conflicts)" --no-edit || true
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "sync: merge upstream vcpkg (conflicts)" \
+            --body "Automated upstream sync found merge conflicts that need manual resolution." \
+            --head "$BRANCH" \
+            --base master
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
