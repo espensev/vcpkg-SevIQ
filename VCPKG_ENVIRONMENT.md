@@ -12,6 +12,24 @@ The expected toolchain file is:
 
 - `D:\Development\vcpkg-SevIQ\scripts\buildsystems\vcpkg.cmake`
 
+## Setup Command
+
+Use the repo script to bootstrap `vcpkg.exe` if needed and persist the expected environment.
+
+Machine scope:
+
+```powershell
+pwsh -File .\Set-VcpkgEnv.ps1 -Scope Machine -DisableMetrics
+```
+
+User scope:
+
+```powershell
+pwsh -File .\Set-VcpkgEnv.ps1 -Scope User -DisableMetrics
+```
+
+The script also adds the Visual Studio Ninja directory to `PATH` when it can resolve it via `vswhere`.
+
 ## Environment Variables
 
 | Variable | Value | Status | Purpose |
@@ -19,6 +37,7 @@ The expected toolchain file is:
 | `VCPKG_ROOT` | `D:\Development\vcpkg-SevIQ` | recommended | standard machine-level reference to the local `vcpkg` tree |
 | `CMAKE_TOOLCHAIN_FILE` | `D:\Development\vcpkg-SevIQ\scripts\buildsystems\vcpkg.cmake` | required for manual CMake | integrates `vcpkg` with CMake |
 | `PATH` | include `D:\Development\vcpkg-SevIQ` | recommended | makes `vcpkg.exe` available from any shell |
+| `PATH` | include the Visual Studio Ninja directory resolved from `vswhere` | recommended | allows `cmake -G Ninja` to work outside a developer shell |
 | `VCPKG_DEFAULT_TRIPLET` | `x64-windows` | optional | useful default for manual `vcpkg` commands |
 
 `vcpkg.exe` being on `PATH` is recommended because many shells do not inherit the same startup environment, and ad-hoc troubleshooting is easier when `vcpkg` is directly callable.
