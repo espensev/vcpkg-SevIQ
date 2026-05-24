@@ -3,7 +3,7 @@ vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO stillwater-sc/universal
     REF "v${VERSION}"
-    SHA512 45254c31ab606020dd5c1bb21344a638bb92f3d195bc6691b37963254bf23f71f4ace01108cea4f4ed7bfcc8446f6e90a43e15563c556e3251b119a0e0b4d06d
+    SHA512 3dd4ff0d1b3f9f4d1b049e00e809311c59eb07b5e93032d212d1a7c59a1122fdbb84d56c9d889523afb34896d247a76d8c8317e6a472d1ed473d57401f573cdc
     HEAD_REF master
     PATCHES
         fix-install-path.patch
