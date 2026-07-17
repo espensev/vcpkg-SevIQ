@@ -2398,7 +2398,7 @@
     },
     "darts-clone": {
       "baseline": "1767ab87cffe",
-      "port-version": 3
+      "port-version": 4
     },
     "dartsim": {
       "baseline": "6.15.0",
@@ -2433,7 +2433,7 @@
       "port-version": 0
     },
     "dawn": {
-      "baseline": "20260624.223603",
+      "baseline": "20260714.215939",
       "port-version": 0
     },
     "daxa": {
@@ -2946,6 +2946,10 @@
     },
     "fameta-counter": {
       "baseline": "2021-02-13",
+      "port-version": 0
+    },
+    "fancyargumentparser": {
+      "baseline": "1.0.1",
       "port-version": 0
     },
     "fann": {
@@ -7825,8 +7829,8 @@
       "port-version": 1
     },
     "pkgconf": {
-      "baseline": "2.5.1",
-      "port-version": 4
+      "baseline": "3.0.3",
+      "port-version": 0
     },
     "plasma-wayland-protocols": {
       "baseline": "1.21.0",
@@ -10637,7 +10641,7 @@
       "port-version": 0
     },
     "vcpkg-make": {
-      "baseline": "2026-01-01",
+      "baseline": "2026-07-09",
       "port-version": 0
     },
     "vcpkg-msbuild": {
@@ -10854,7 +10858,7 @@
     },
     "vulkan-validationlayers": {
       "baseline": "1.4.350.1",
-      "port-version": 0
+      "port-version": 1
     },
     "vvenc": {
       "baseline": "1.14.0",
