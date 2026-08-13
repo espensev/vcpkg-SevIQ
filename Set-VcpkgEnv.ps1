@@ -65,6 +65,58 @@ function Get-VisualStudioNinjaDir {
     return $null
 }
 
+function Get-VcpkgAcquiredToolDir {
+    param(
+        [string]$ExecutableName,
+        [string]$ToolName
+    )
+
+    $toolsRoot = Join-Path $RepoRoot 'downloads\tools'
+    if (-not (Test-Path $toolsRoot)) {
+        return $null
+    }
+
+    $toolPath = Get-ChildItem -LiteralPath $toolsRoot -Directory -Filter "$ToolName-*" -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            Get-ChildItem -LiteralPath $_.FullName -Recurse -Filter $ExecutableName -File -ErrorAction SilentlyContinue
+        } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if ($null -ne $toolPath) {
+        return $toolPath.DirectoryName
+    }
+
+    return $null
+}
+
+function Get-ProgramFilesCMakeDir {
+    $cmakeDir = Join-Path $env:ProgramFiles 'CMake\bin'
+    if (Test-Path (Join-Path $cmakeDir 'cmake.exe')) {
+        return $cmakeDir
+    }
+
+    return $null
+}
+
+function Get-CMakeDir {
+    $cmakeDir = Get-ProgramFilesCMakeDir
+    if ($null -ne $cmakeDir) {
+        return $cmakeDir
+    }
+
+    return Get-VcpkgAcquiredToolDir -ExecutableName 'cmake.exe' -ToolName 'cmake'
+}
+
+function Get-NinjaDir {
+    $ninjaDir = Get-VisualStudioNinjaDir
+    if ($null -ne $ninjaDir) {
+        return $ninjaDir
+    }
+
+    return Get-VcpkgAcquiredToolDir -ExecutableName 'ninja.exe' -ToolName 'ninja'
+}
+
 function Set-ScopedVariable {
     param(
         [string]$Name,
@@ -99,12 +151,15 @@ function Add-PathEntry {
         $entries = $rawPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     }
 
-    if ($entries -contains $Entry) {
-        Write-Host "  [skip] PATH already contains $Entry for $TargetScope" -ForegroundColor DarkGray
+    $remainingEntries = $entries | Where-Object { $_ -ne $Entry }
+    $newEntries = @($Entry) + @($remainingEntries)
+    $newPath = $newEntries -join ';'
+
+    if ($rawPath -eq $newPath) {
+        Write-Host "  [skip] PATH already prioritizes $Entry for $TargetScope" -ForegroundColor DarkGray
     } else {
-        $newPath = (@($entries) + $Entry) -join ';'
         [Environment]::SetEnvironmentVariable('Path', $newPath, $TargetScope)
-        Write-Host "  [set]  Added $Entry to PATH ($TargetScope)" -ForegroundColor Green
+        Write-Host "  [set]  Prioritized $Entry in PATH ($TargetScope)" -ForegroundColor Green
     }
 
     $processEntries = @()
@@ -112,9 +167,8 @@ function Add-PathEntry {
         $processEntries = $env:Path -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     }
 
-    if ($processEntries -notcontains $Entry) {
-        $env:Path = (($processEntries + $Entry) -join ';')
-    }
+    $processEntries = $processEntries | Where-Object { $_ -ne $Entry }
+    $env:Path = ((@($Entry) + @($processEntries)) -join ';')
 }
 
 function Send-EnvironmentChangeNotification {
@@ -194,11 +248,18 @@ foreach ($kv in $vars.GetEnumerator()) {
 
 Add-PathEntry -Entry $VcpkgRoot -TargetScope $targetScope
 
-$ninjaDir = Get-VisualStudioNinjaDir
+$cmakeDir = Get-CMakeDir
+if ($null -ne $cmakeDir) {
+    Add-PathEntry -Entry $cmakeDir -TargetScope $targetScope
+} else {
+    Write-Warning 'CMake was not found in Program Files or vcpkg-acquired tools. Install CMake or ensure a compatible cmake.exe is on PATH.'
+}
+
+$ninjaDir = Get-NinjaDir
 if ($null -ne $ninjaDir) {
     Add-PathEntry -Entry $ninjaDir -TargetScope $targetScope
 } else {
-    Write-Warning 'Visual Studio Ninja was not found. CMake configure steps that use -G Ninja may need to locate Ninja explicitly.'
+    Write-Warning 'Ninja was not found in Visual Studio or vcpkg-acquired tools. CMake configure steps that use -G Ninja may need to locate Ninja explicitly.'
 }
 
 Send-EnvironmentChangeNotification
