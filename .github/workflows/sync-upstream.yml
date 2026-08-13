@@ -8,7 +8,7 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
+  issues: write
 
 jobs:
   sync:
@@ -31,36 +31,47 @@ jobs:
           echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
           echo "Upstream is $BEHIND commits ahead"
 
-      - name: Merge upstream
+      - name: Merge upstream while preserving fork workflows
         if: steps.check.outputs.behind != '0'
         id: merge
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git merge upstream/master --no-edit; then
+          if git merge upstream/master --no-commit --no-ff; then
+            # GITHUB_TOKEN cannot update workflow files. Keep the fork-owned
+            # workflow tree while syncing every other upstream path.
+            git restore --source=HEAD --staged --worktree -- .github/workflows
+            git commit --no-edit
             echo "conflict=false" >> "$GITHUB_OUTPUT"
           else
-            git merge --abort
+            git merge --abort || true
             echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify fork workflows are unchanged
+        if: steps.check.outputs.behind != '0' && steps.merge.outputs.conflict == 'false'
+        run: |
+          if ! git diff --quiet HEAD^1 HEAD -- .github/workflows; then
+            echo "Upstream merge changed fork-owned workflow files; refusing to push."
+            git diff --stat HEAD^1 HEAD -- .github/workflows
+            exit 1
           fi
 
       - name: Push merged changes
         if: steps.check.outputs.behind != '0' && steps.merge.outputs.conflict == 'false'
         run: git push origin master
 
-      - name: Create PR on conflict
+      - name: Report merge conflict
         if: steps.merge.outputs.conflict == 'true'
         run: |
-          BRANCH="sync-upstream/$(date +%Y%m%d)"
-          git checkout -b "$BRANCH"
-          git merge upstream/master --no-edit || true
-          git add -A
-          git commit -m "sync: merge upstream microsoft/vcpkg (conflicts)" --no-edit || true
-          git push origin "$BRANCH"
-          gh pr create \
-            --title "sync: merge upstream vcpkg (conflicts)" \
-            --body "Automated upstream sync found merge conflicts that need manual resolution." \
-            --head "$BRANCH" \
-            --base master
+          TITLE="sync: upstream vcpkg merge needs manual resolution"
+          BODY="Automated upstream sync found merge conflicts on $(date -u +%Y-%m-%d). The merge was aborted without committing conflict markers. Run the sync locally, resolve the conflicts, and push master."
+          ISSUE_NUMBER="$(gh issue list --state open --search \"$TITLE in:title\" --json number --jq '.[0].number // empty')"
+          if [ -n "$ISSUE_NUMBER" ]; then
+            gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
+          exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
