@@ -32,6 +32,12 @@ The script also prioritizes CMake and Ninja on `PATH`. It prefers CMake from
 `Program Files` and Ninja from Visual Studio (resolved through `vswhere`), then
 falls back to compatible vcpkg-acquired tools under `downloads\tools`.
 
+When `SND_SQ_Shared` is available, the script also creates and uses the shared
+binary cache at `SND_SQ_Shared\caches\vcpkg\binary`. The local vcpkg checkout,
+`installed`, `buildtrees`, `packages`, and `downloads` directories remain on the
+machine. Use `-SharedRoot <absolute-path>` to override the discovered shared
+root, or `-Scope Process` for a non-persistent test run.
+
 ## Environment Variables
 
 | Variable | Value | Status | Purpose |
@@ -41,8 +47,29 @@ falls back to compatible vcpkg-acquired tools under `downloads\tools`.
 | `PATH` | include `D:\Development\vcpkg-SevIQ` | recommended | makes `vcpkg.exe` available from any shell |
 | `PATH` | include the resolved CMake and Ninja directories | recommended | prioritizes the installed tools, with vcpkg-acquired fallbacks when needed |
 | `VCPKG_DEFAULT_TRIPLET` | `x64-windows` | optional | useful default for manual `vcpkg` commands |
+| `VCPKG_BINARY_SOURCES` | `clear;files,<shared-root>\caches\vcpkg\binary,readwrite;default,readwrite` | recommended | reuses ABI-compatible packages across machines while retaining the normal local cache |
 
 `vcpkg.exe` being on `PATH` is recommended because many shells do not inherit the same startup environment, and ad-hoc troubleshooting is easier when `vcpkg` is directly callable.
+
+## Shared Root Layout
+
+The shared root is a general store rather than a vcpkg installation:
+
+```text
+<shared-root>\
+├── caches\
+│   └── vcpkg\
+│       └── binary\
+├── artifacts\
+└── exchange\
+```
+
+- `caches` contains disposable, reproducible caches namespaced by tool.
+- `artifacts` is reserved for named, versioned build outputs.
+- `exchange` is reserved for temporary cross-machine transfers.
+
+Do not put active Git checkouts, credentials, `installed`, `buildtrees`, or
+other concurrently mutated build directories in the shared root.
 
 ## Required Tools
 

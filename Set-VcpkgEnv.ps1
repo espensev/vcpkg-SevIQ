@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Machine', 'User')]
+    [ValidateSet('Machine', 'User', 'Process')]
     [string]$Scope = 'Machine',
+
+    [string]$SharedRoot,
 
     [switch]$DisableMetrics = $false
 )
@@ -14,7 +16,9 @@ $ErrorActionPreference = 'Stop'
     Bootstraps and registers vcpkg-related environment variables.
 .DESCRIPTION
     Ensures vcpkg.exe exists, then sets VCPKG_ROOT, VCPKG_DEFAULT_TRIPLET,
-    CMAKE_TOOLCHAIN_FILE and convenient PATH entries at Machine or User scope.
+    CMAKE_TOOLCHAIN_FILE and convenient PATH entries at Machine, User, or Process scope.
+    When SharedRoot is supplied, or SND_SQ_Shared exists at the requested scope,
+    configures a namespaced shared binary cache with the normal local cache as a fallback.
     Machine scope requires an elevated PowerShell session.
 .NOTES
     Re-running is safe. Existing values are overwritten; PATH entries are not duplicated.
@@ -36,8 +40,42 @@ function Get-TargetScope([string]$RequestedScope) {
     switch ($RequestedScope) {
         'Machine' { return [System.EnvironmentVariableTarget]::Machine }
         'User' { return [System.EnvironmentVariableTarget]::User }
+        'Process' { return [System.EnvironmentVariableTarget]::Process }
         default { throw "Unsupported scope: $RequestedScope" }
     }
+}
+
+function Get-SharedRoot {
+    param(
+        [string]$ExplicitRoot,
+        [System.EnvironmentVariableTarget]$TargetScope
+    )
+
+    $candidate = $ExplicitRoot
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        $candidate = [Environment]::GetEnvironmentVariable('SND_SQ_Shared', $TargetScope)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($candidate) -and $TargetScope -ne [System.EnvironmentVariableTarget]::Process) {
+        $candidate = [Environment]::GetEnvironmentVariable(
+            'SND_SQ_Shared',
+            [System.EnvironmentVariableTarget]::Process
+        )
+    }
+
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        return $null
+    }
+
+    $candidate = $candidate.Trim().TrimEnd('\')
+    if (-not [System.IO.Path]::IsPathRooted($candidate)) {
+        throw "Shared root must be an absolute path: $candidate"
+    }
+    if ($candidate.IndexOfAny([char[]]@(',', ';')) -ge 0) {
+        throw "Shared root cannot contain ',' or ';' because vcpkg uses them as binary-source delimiters: $candidate"
+    }
+
+    return $candidate
 }
 
 function Get-VisualStudioNinjaDir {
@@ -242,6 +280,15 @@ $vars = @{
     CMAKE_TOOLCHAIN_FILE  = $ToolchainFile
 }
 
+$resolvedSharedRoot = Get-SharedRoot -ExplicitRoot $SharedRoot -TargetScope $targetScope
+if ($null -ne $resolvedSharedRoot) {
+    $sharedBinaryCache = Join-Path $resolvedSharedRoot 'caches\vcpkg\binary'
+    [void](New-Item -ItemType Directory -Path $sharedBinaryCache -Force)
+    $vars.VCPKG_BINARY_SOURCES = "clear;files,$sharedBinaryCache,readwrite;default,readwrite"
+} else {
+    Write-Warning 'SND_SQ_Shared is not set and -SharedRoot was not supplied. The existing vcpkg binary-cache configuration is unchanged.'
+}
+
 foreach ($kv in $vars.GetEnumerator()) {
     Set-ScopedVariable -Name $kv.Key -Value $kv.Value -TargetScope $targetScope
 }
@@ -262,5 +309,9 @@ if ($null -ne $ninjaDir) {
     Write-Warning 'Ninja was not found in Visual Studio or vcpkg-acquired tools. CMake configure steps that use -G Ninja may need to locate Ninja explicitly.'
 }
 
-Send-EnvironmentChangeNotification
-Write-Host "`nDone. Open a new shell to pick up the persisted changes." -ForegroundColor Cyan
+if ($targetScope -ne [System.EnvironmentVariableTarget]::Process) {
+    Send-EnvironmentChangeNotification
+    Write-Host "`nDone. Open a new shell to pick up the persisted changes." -ForegroundColor Cyan
+} else {
+    Write-Output "`nDone. Process-scoped changes are active in the current PowerShell process."
+}
