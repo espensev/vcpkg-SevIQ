@@ -2085,7 +2085,7 @@
       "port-version": 0
     },
     "cpp-sort": {
-      "baseline": "2.1.0",
+      "baseline": "2.2.0",
       "port-version": 0
     },
     "cpp-timsort": {
@@ -2674,7 +2674,7 @@
     },
     "duckx": {
       "baseline": "1.2.2",
-      "port-version": 1
+      "port-version": 2
     },
     "duilib": {
       "baseline": "2024-12-23",
@@ -3649,7 +3649,7 @@
       "port-version": 0
     },
     "gtk": {
-      "baseline": "4.22.4",
+      "baseline": "4.22.5",
       "port-version": 0
     },
     "gtk3": {
@@ -7098,7 +7098,7 @@
     },
     "netcdf-c": {
       "baseline": "4.9.3",
-      "port-version": 3
+      "port-version": 4
     },
     "netcdf-cxx4": {
       "baseline": "4.3.1",
@@ -7330,7 +7330,7 @@
     },
     "oboe": {
       "baseline": "1.10.0",
-      "port-version": 0
+      "port-version": 1
     },
     "observer-ptr-lite": {
       "baseline": "0.4.0",
@@ -9477,7 +9477,7 @@
       "port-version": 0
     },
     "slick-stream-buffer-multiplexer": {
-      "baseline": "1.0.1",
+      "baseline": "2.0.0",
       "port-version": 0
     },
     "slickquant-hyperliquid-cpp": {
