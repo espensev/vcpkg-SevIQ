@@ -68,8 +68,9 @@ There is no automatic `SND_SQ_Shared` lookup. The script never creates the cache
 directory or checks share access. Provision and authorize storage separately;
 a subsequent vcpkg invocation can write to the configured cache. Commas,
 semicolons, and backticks are rejected because they delimit or escape vcpkg
-binary-source fields. Root paths containing credential-shaped assignments or known
-provider-key prefixes are rejected before probing or reporting intended values.
+binary-source fields. Root paths containing credential-shaped assignments, bearer/basic authentication, URI userinfo,
+known provider-key prefixes, JWTs, or PEM markers are rejected before probing or
+reporting intended values. This bounded detection does not classify arbitrary secrets.
 
 A different nonempty `VCPKG_BINARY_SOURCES` fails before mutation unless
 `-ReplaceBinarySources` is also supplied with `-SharedRoot`. An already matching

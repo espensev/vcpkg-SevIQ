@@ -26,7 +26,7 @@ function Invoke-VcpkgEnvironment {
     }
     $codeRoot = & $Adapter.Read 'MACHINE_CODE_ROOT'
     # Reject credential-shaped paths before probing or returning intended values.
-    $credentialPattern = '(?i)(?:password|passwd|pwd|token|secret|api[_-]?key|authorization|credential)\s*[:=]|(?:sk-(?:proj-|ant-)?|gh[pousr]_|github_pat_|AKIA)[A-Za-z0-9_-]{16,}'
+    $credentialPattern = '(?i)\[REDACTED\]|\bsk-(?:proj-|ant-)?[a-z0-9_-]{16,}|\bgh[pousr]_[a-z0-9]{20,}|\bgithub_pat_[a-z0-9_]{20,}|\bxox[baprs]-[a-z0-9-]{10,}|\b(?:glpat-|hf_|npm_)[a-z0-9_-]{16,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bAIza[a-z0-9_-]{30,}|\beyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+|-----BEGIN [A-Z ]+-----|\b(?:bearer|basic)\s+\S+|[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@|(?:password|passwd|pwd|sshpass|token|secret|api[ _-]?key|authorization|credential|connection[ _-]?string)\s*[=:]\s*\S+'
     if ($codeRoot -match $credentialPattern -or $SharedRoot -match $credentialPattern) {
         throw 'MACHINE_CODE_ROOT and SharedRoot must not contain credential-shaped content.'
     }

@@ -119,7 +119,7 @@ $f = New-Fixture
 $f.State.Values.VCPKG_ROOT = 'synthetic-secret-existing-root'
 $p = Invoke-VcpkgEnvironment -Adapter $f.Adapter
 Assert-True (($p | ConvertTo-Json -Depth 6) -notmatch 'synthetic-secret') 'Plan also excludes arbitrary prior values'
-foreach ($credentialPath in @('C:\cache\token=review-synthetic-secret-8042', 'C:\cache\password=review-synthetic-secret-8042', 'C:\cache\api_key=review-synthetic-secret-8042')) {
+foreach ($credentialPath in @('C:\cache\token=review-synthetic-secret-8042', 'C:\cache\password=review-synthetic-secret-8042', 'C:\cache\api_key=review-synthetic-secret-8042', 'C:\cache\Bearer review-synthetic-8042', 'C:\cache\glpat-reviewSynthetic8042abcd', 'C:\cache\xoxb-reviewSynthetic8042abcd', 'C:\cache\hf_reviewSynthetic8042abcd', 'C:\cache\npm_reviewSynthetic8042abcd', 'C:\cache\AIzaReviewSynthetic8042abcdefghijklmnopq', 'C:\cache\eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.reviewSynthetic8042abcd', 'C:\cache\-----BEGIN PRIVATE KEY-----', 'C:\cache\https://user:review-synthetic-8042@example.invalid', 'C:\cache\ASIA1234567890ABCDEF', 'C:\cache\Basic cmV2aWV3OnN5bnRoZXRpYy1zZWNyZXQ=')) {
     foreach ($option in @('MACHINE_CODE_ROOT', 'SharedRoot')) {
         $f = New-Fixture
         $arguments = @{Adapter=$f.Adapter}
@@ -129,7 +129,7 @@ foreach ($credentialPath in @('C:\cache\token=review-synthetic-secret-8042', 'C:
         try { $null = Invoke-VcpkgEnvironment @arguments }
         catch { $errorMessage = $_.Exception.Message }
         Assert-True ($null -ne $errorMessage -and $errorMessage -match 'credential-shaped') 'credential-shaped path rejected'
-        Assert-True ($errorMessage -notmatch 'review-synthetic-secret') 'rejection does not echo credential'
+        Assert-True ($errorMessage -notmatch [regex]::Escape($credentialPath)) 'rejection does not echo credential'
     }
 }
 # Exercise the public read-only entry point and compare the entire real Process environment.
