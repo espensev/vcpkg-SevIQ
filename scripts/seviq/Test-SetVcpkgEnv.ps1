@@ -119,6 +119,19 @@ $f = New-Fixture
 $f.State.Values.VCPKG_ROOT = 'synthetic-secret-existing-root'
 $p = Invoke-VcpkgEnvironment -Adapter $f.Adapter
 Assert-True (($p | ConvertTo-Json -Depth 6) -notmatch 'synthetic-secret') 'Plan also excludes arbitrary prior values'
+foreach ($credentialPath in @('C:\cache\token=review-synthetic-secret-8042', 'C:\cache\password=review-synthetic-secret-8042', 'C:\cache\api_key=review-synthetic-secret-8042')) {
+    foreach ($option in @('MACHINE_CODE_ROOT', 'SharedRoot')) {
+        $f = New-Fixture
+        $arguments = @{Adapter=$f.Adapter}
+        if ($option -eq 'MACHINE_CODE_ROOT') { $f.State.Values.MACHINE_CODE_ROOT = $credentialPath }
+        else { $arguments.SharedRoot = $credentialPath }
+        $errorMessage = $null
+        try { $null = Invoke-VcpkgEnvironment @arguments }
+        catch { $errorMessage = $_.Exception.Message }
+        Assert-True ($null -ne $errorMessage -and $errorMessage -match 'credential-shaped') 'credential-shaped path rejected'
+        Assert-True ($errorMessage -notmatch 'review-synthetic-secret') 'rejection does not echo credential'
+    }
+}
 # Exercise the public read-only entry point and compare the entire real Process environment.
 $before = [Environment]::GetEnvironmentVariables('Process') | ConvertTo-Json -Compress
 $publicPlan = & $setupScript

@@ -25,6 +25,11 @@ function Invoke-VcpkgEnvironment {
         throw 'Use -Scope Process. User/Machine persistent changes require a separately reviewed environment owner.'
     }
     $codeRoot = & $Adapter.Read 'MACHINE_CODE_ROOT'
+    # Reject credential-shaped paths before probing or returning intended values.
+    $credentialPattern = '(?i)(?:password|passwd|pwd|token|secret|api[_-]?key|authorization|credential)\s*[:=]|(?:sk-(?:proj-|ant-)?|gh[pousr]_|github_pat_|AKIA)[A-Za-z0-9_-]{16,}'
+    if ($codeRoot -match $credentialPattern -or $SharedRoot -match $credentialPattern) {
+        throw 'MACHINE_CODE_ROOT and SharedRoot must not contain credential-shaped content.'
+    }
     # Reject drive-relative and current-drive paths; permit absolute drive and UNC roots.
     if ([string]::IsNullOrWhiteSpace($codeRoot) -or $codeRoot -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)') {
         throw 'MACHINE_CODE_ROOT must contain an absolute code-volume root in the caller Process environment.'
