@@ -1,317 +1,126 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Machine', 'User', 'Process')]
-    [string]$Scope = 'Machine',
-
+    [ValidateSet('Plan', 'Validate', 'Apply')]
+    [string]$Mode = 'Plan',
+    [ValidateSet('Process', 'User', 'Machine')]
+    [string]$Scope = 'Process',
     [string]$SharedRoot,
-
-    [switch]$DisableMetrics = $false
+    [switch]$ReplaceBinarySources,
+    [switch]$DisableMetrics
 )
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
-<#
-.SYNOPSIS
-    Bootstraps and registers vcpkg-related environment variables.
-.DESCRIPTION
-    Ensures vcpkg.exe exists, then sets VCPKG_ROOT, VCPKG_DEFAULT_TRIPLET,
-    CMAKE_TOOLCHAIN_FILE and convenient PATH entries at Machine, User, or Process scope.
-    When SharedRoot is supplied, or SND_SQ_Shared exists at the requested scope,
-    configures a namespaced shared binary cache with the normal local cache as a fallback.
-    Machine scope requires an elevated PowerShell session.
-.NOTES
-    Re-running is safe. Existing values are overwritten; PATH entries are not duplicated.
-#>
-
-$RepoRoot        = Split-Path -Parent $PSCommandPath
-$VcpkgRoot       = $RepoRoot
-$DefaultTriplet  = 'x64-windows'
-$ToolchainFile   = Join-Path $VcpkgRoot 'scripts\buildsystems\vcpkg.cmake'
-$BootstrapScript = Join-Path $VcpkgRoot 'bootstrap-vcpkg.bat'
-
-function Test-IsAdministrator {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-function Get-TargetScope([string]$RequestedScope) {
-    switch ($RequestedScope) {
-        'Machine' { return [System.EnvironmentVariableTarget]::Machine }
-        'User' { return [System.EnvironmentVariableTarget]::User }
-        'Process' { return [System.EnvironmentVariableTarget]::Process }
-        default { throw "Unsupported scope: $RequestedScope" }
-    }
-}
-
-function Get-SharedRoot {
+function Invoke-VcpkgEnvironment {
+    [CmdletBinding()]
     param(
-        [string]$ExplicitRoot,
-        [System.EnvironmentVariableTarget]$TargetScope
+        [ValidateSet('Plan', 'Validate', 'Apply')][string]$Mode = 'Plan',
+        [ValidateSet('Process', 'User', 'Machine')][string]$Scope = 'Process',
+        [string]$SharedRoot,
+        [switch]$ReplaceBinarySources,
+        [switch]$DisableMetrics,
+        [Parameter(Mandatory)][hashtable]$Adapter
     )
-
-    $candidate = $ExplicitRoot
-    if ([string]::IsNullOrWhiteSpace($candidate)) {
-        $candidate = [Environment]::GetEnvironmentVariable('SND_SQ_Shared', $TargetScope)
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+    if ($Scope -ne 'Process') {
+        throw 'Use -Scope Process. User/Machine persistent changes require a separately reviewed environment owner.'
     }
-
-    if ([string]::IsNullOrWhiteSpace($candidate) -and $TargetScope -ne [System.EnvironmentVariableTarget]::Process) {
-        $candidate = [Environment]::GetEnvironmentVariable(
-            'SND_SQ_Shared',
-            [System.EnvironmentVariableTarget]::Process
-        )
+    $codeRoot = & $Adapter.Read 'MACHINE_CODE_ROOT'
+    # Reject drive-relative and current-drive paths; permit absolute drive and UNC roots.
+    if ([string]::IsNullOrWhiteSpace($codeRoot) -or $codeRoot -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)') {
+        throw 'MACHINE_CODE_ROOT must contain an absolute code-volume root in the caller Process environment.'
     }
-
-    if ([string]::IsNullOrWhiteSpace($candidate)) {
-        return $null
+    $root = [IO.Path]::GetFullPath((Join-Path $codeRoot 'Development\vcpkg-SevIQ'))
+    $toolchain = Join-Path $root 'scripts\buildsystems\vcpkg.cmake'
+    $desired = [ordered]@{
+        VCPKG_ROOT = $root
+        VCPKG_DEFAULT_TRIPLET = 'x64-windows'
+        CMAKE_TOOLCHAIN_FILE = $toolchain
     }
-
-    $candidate = $candidate.Trim().TrimEnd('\')
-    if (-not [System.IO.Path]::IsPathRooted($candidate)) {
-        throw "Shared root must be an absolute path: $candidate"
+    if ($DisableMetrics) { $desired.VCPKG_DISABLE_METRICS = '1' }
+    if ($ReplaceBinarySources -and [string]::IsNullOrWhiteSpace($SharedRoot)) {
+        throw '-ReplaceBinarySources requires an explicit -SharedRoot.'
     }
-    if ($candidate.IndexOfAny([char[]]@(',', ';')) -ge 0) {
-        throw "Shared root cannot contain ',' or ';' because vcpkg uses them as binary-source delimiters: $candidate"
+    if (-not [string]::IsNullOrWhiteSpace($SharedRoot)) {
+        if ($SharedRoot -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)' -or
+            $SharedRoot.IndexOfAny([char[]]@(',', ';', '`')) -ge 0) {
+            throw 'SharedRoot must be an absolute path without comma, semicolon, or backtick binary-source delimiters.'
+        }
+        $cache = Join-Path ([IO.Path]::GetFullPath($SharedRoot)) 'caches\vcpkg\binary'
+        $binarySources = "clear;files,$cache,readwrite;default,readwrite"
+        $existing = & $Adapter.Read 'VCPKG_BINARY_SOURCES'
+        if (-not [string]::IsNullOrEmpty($existing) -and $existing -cne $binarySources -and -not $ReplaceBinarySources) {
+            throw 'VCPKG_BINARY_SOURCES already differs. Use -ReplaceBinarySources with -SharedRoot to opt in to replacement.'
+        }
+        $desired.VCPKG_BINARY_SOURCES = $binarySources
     }
-
-    return $candidate
-}
-
-function Get-VisualStudioNinjaDir {
-    $programFilesX86 = ${env:ProgramFiles(x86)}
-    if ([string]::IsNullOrWhiteSpace($programFilesX86)) {
-        return $null
+    $errors = @()
+    if (-not (& $Adapter.Exists $toolchain)) {
+        $errors += "Canonical toolchain file is missing: $toolchain"
     }
-
-    $vswhere = Join-Path $programFilesX86 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (-not (Test-Path $vswhere)) {
-        return $null
-    }
-
-    $installationPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
-    if ([string]::IsNullOrWhiteSpace($installationPath)) {
-        return $null
-    }
-
-    $installationPath = $installationPath.Trim()
-    $ninjaDir = Join-Path $installationPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
-    if (Test-Path (Join-Path $ninjaDir 'ninja.exe')) {
-        return $ninjaDir
-    }
-
-    return $null
-}
-
-function Get-VcpkgAcquiredToolDir {
-    param(
-        [string]$ExecutableName,
-        [string]$ToolName
+    $changes = @(
+        foreach ($name in $desired.Keys) {
+            $before = & $Adapter.Read $name
+            [pscustomobject]@{
+                Name = $name
+                Scope = 'Process'
+                # Existing values may carry credentials, even for conventional path variables.
+                Before = $(if ($null -eq $before) { $null } else { '[redacted]' })
+                After = $desired[$name]
+                Changed = ($before -cne $desired[$name])
+            }
+        }
     )
-
-    $toolsRoot = Join-Path $RepoRoot 'downloads\tools'
-    if (-not (Test-Path $toolsRoot)) {
-        return $null
+    $identity = $null
+    if ($Mode -eq 'Apply') {
+        if ($errors.Count -gt 0) { throw ($errors -join '; ') }
+        $results = @(& $Adapter.Identity)
+        if ($results.Count -ne 1 -or $null -eq $results[0] -or
+            $null -eq $results[0].PSObject.Properties['status'] -or
+            $null -eq $results[0].PSObject.Properties['machineId'] -or
+            $null -eq $results[0].PSObject.Properties['instanceId'] -or
+            $results[0].status -cne 'VERIFIED' -or
+            $results[0].machineId -cne 'snd-desk' -or
+            $results[0].instanceId -cne 'ca96d510-7d87-4cec-8e1a-bd8fc3866903') {
+            throw 'Local identity verification must return exactly one VERIFIED snd-desk result with the enrolled instance ID.'
+        }
+        $identity = [pscustomobject]@{
+            Status = $results[0].status
+            MachineId = $results[0].machineId
+            InstanceId = $results[0].instanceId
+        }
+        foreach ($change in $changes) {
+            if ($change.Changed) {
+                & $Adapter.Write $change.Name $change.After
+            }
+            if ((& $Adapter.Read $change.Name) -cne $change.After) {
+                throw "Process readback failed for $($change.Name); earlier Process changes may have applied."
+            }
+        }
     }
-
-    $toolPath = Get-ChildItem -LiteralPath $toolsRoot -Directory -Filter "$ToolName-*" -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            Get-ChildItem -LiteralPath $_.FullName -Recurse -Filter $ExecutableName -File -ErrorAction SilentlyContinue
-        } |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-
-    if ($null -ne $toolPath) {
-        return $toolPath.DirectoryName
-    }
-
-    return $null
-}
-
-function Get-ProgramFilesCMakeDir {
-    $cmakeDir = Join-Path $env:ProgramFiles 'CMake\bin'
-    if (Test-Path (Join-Path $cmakeDir 'cmake.exe')) {
-        return $cmakeDir
-    }
-
-    return $null
-}
-
-function Get-CMakeDir {
-    $cmakeDir = Get-ProgramFilesCMakeDir
-    if ($null -ne $cmakeDir) {
-        return $cmakeDir
-    }
-
-    return Get-VcpkgAcquiredToolDir -ExecutableName 'cmake.exe' -ToolName 'cmake'
-}
-
-function Get-NinjaDir {
-    $ninjaDir = Get-VisualStudioNinjaDir
-    if ($null -ne $ninjaDir) {
-        return $ninjaDir
-    }
-
-    return Get-VcpkgAcquiredToolDir -ExecutableName 'ninja.exe' -ToolName 'ninja'
-}
-
-function Set-ScopedVariable {
-    param(
-        [string]$Name,
-        [string]$Value,
-        [System.EnvironmentVariableTarget]$TargetScope
-    )
-
-    $current = [Environment]::GetEnvironmentVariable($Name, $TargetScope)
-    if ($current -eq $Value) {
-        Write-Host "  [skip] $Name already set correctly for $TargetScope" -ForegroundColor DarkGray
-    } else {
-        [Environment]::SetEnvironmentVariable($Name, $Value, $TargetScope)
-        Write-Host "  [set]  $Name = $Value ($TargetScope)" -ForegroundColor Green
-    }
-
-    [Environment]::SetEnvironmentVariable($Name, $Value, [System.EnvironmentVariableTarget]::Process)
-}
-
-function Add-PathEntry {
-    param(
-        [string]$Entry,
-        [System.EnvironmentVariableTarget]$TargetScope
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Entry)) {
-        return
-    }
-
-    $rawPath = [Environment]::GetEnvironmentVariable('Path', $TargetScope)
-    $entries = @()
-    if (-not [string]::IsNullOrWhiteSpace($rawPath)) {
-        $entries = $rawPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    }
-
-    $remainingEntries = $entries | Where-Object { $_ -ne $Entry }
-    $newEntries = @($Entry) + @($remainingEntries)
-    $newPath = $newEntries -join ';'
-
-    if ($rawPath -eq $newPath) {
-        Write-Host "  [skip] PATH already prioritizes $Entry for $TargetScope" -ForegroundColor DarkGray
-    } else {
-        [Environment]::SetEnvironmentVariable('Path', $newPath, $TargetScope)
-        Write-Host "  [set]  Prioritized $Entry in PATH ($TargetScope)" -ForegroundColor Green
-    }
-
-    $processEntries = @()
-    if (-not [string]::IsNullOrWhiteSpace($env:Path)) {
-        $processEntries = $env:Path -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    }
-
-    $processEntries = $processEntries | Where-Object { $_ -ne $Entry }
-    $env:Path = ((@($Entry) + @($processEntries)) -join ';')
-}
-
-function Send-EnvironmentChangeNotification {
-    if (-not ('Win32.NativeMethods' -as [type])) {
-        Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-
-namespace Win32
-{
-    public static class NativeMethods
-    {
-        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        public static extern IntPtr SendMessageTimeout(
-            IntPtr hWnd,
-            int Msg,
-            IntPtr wParam,
-            string lParam,
-            int fuFlags,
-            int uTimeout,
-            out IntPtr lpdwResult);
-    }
-}
-'@
-    }
-
-    $hwndBroadcast = [IntPtr]0xffff
-    $wmSettingChange = 0x001A
-    $abortIfHung = 0x0002
-    $result = [IntPtr]::Zero
-    [void][Win32.NativeMethods]::SendMessageTimeout(
-        $hwndBroadcast,
-        $wmSettingChange,
-        [IntPtr]::Zero,
-        'Environment',
-        $abortIfHung,
-        5000,
-        [ref]$result
-    )
-}
-
-if ($Scope -eq 'Machine' -and -not (Test-IsAdministrator)) {
-    throw "Machine scope requires an elevated PowerShell session. Re-run with -Scope User or launch PowerShell as Administrator."
-}
-
-if (-not (Test-Path $ToolchainFile)) {
-    throw "Toolchain file not found at $ToolchainFile - aborting."
-}
-
-if (-not (Test-Path "$VcpkgRoot\vcpkg.exe")) {
-    if (-not (Test-Path $BootstrapScript)) {
-        throw "bootstrap-vcpkg.bat not found at $BootstrapScript - aborting."
-    }
-
-    Write-Host "Bootstrapping vcpkg.exe..." -ForegroundColor Cyan
-    $bootstrapArgs = @()
-    if ($DisableMetrics) {
-        $bootstrapArgs += '-disableMetrics'
-    }
-
-    & $BootstrapScript @bootstrapArgs
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$VcpkgRoot\vcpkg.exe")) {
-        throw "Bootstrapping vcpkg.exe failed."
+    [pscustomobject]@{
+        Mode = $Mode
+        Scope = 'Process'
+        IsValid = ($errors.Count -eq 0 -and ($Mode -eq 'Apply' -or @($changes | Where-Object Changed).Count -eq 0))
+        Identity = $identity
+        Changes = $changes
+        Errors = $errors
     }
 }
 
-$targetScope = Get-TargetScope -RequestedScope $Scope
-$vars = @{
-    VCPKG_ROOT            = $VcpkgRoot
-    VCPKG_DEFAULT_TRIPLET = $DefaultTriplet
-    CMAKE_TOOLCHAIN_FILE  = $ToolchainFile
-}
-
-$resolvedSharedRoot = Get-SharedRoot -ExplicitRoot $SharedRoot -TargetScope $targetScope
-if ($null -ne $resolvedSharedRoot) {
-    $sharedBinaryCache = Join-Path $resolvedSharedRoot 'caches\vcpkg\binary'
-    [void](New-Item -ItemType Directory -Path $sharedBinaryCache -Force)
-    $vars.VCPKG_BINARY_SOURCES = "clear;files,$sharedBinaryCache,readwrite;default,readwrite"
-} else {
-    Write-Warning 'SND_SQ_Shared is not set and -SharedRoot was not supplied. The existing vcpkg binary-cache configuration is unchanged.'
-}
-
-foreach ($kv in $vars.GetEnumerator()) {
-    Set-ScopedVariable -Name $kv.Key -Value $kv.Value -TargetScope $targetScope
-}
-
-Add-PathEntry -Entry $VcpkgRoot -TargetScope $targetScope
-
-$cmakeDir = Get-CMakeDir
-if ($null -ne $cmakeDir) {
-    Add-PathEntry -Entry $cmakeDir -TargetScope $targetScope
-} else {
-    Write-Warning 'CMake was not found in Program Files or vcpkg-acquired tools. Install CMake or ensure a compatible cmake.exe is on PATH.'
-}
-
-$ninjaDir = Get-NinjaDir
-if ($null -ne $ninjaDir) {
-    Add-PathEntry -Entry $ninjaDir -TargetScope $targetScope
-} else {
-    Write-Warning 'Ninja was not found in Visual Studio or vcpkg-acquired tools. CMake configure steps that use -G Ninja may need to locate Ninja explicitly.'
-}
-
-if ($targetScope -ne [System.EnvironmentVariableTarget]::Process) {
-    Send-EnvironmentChangeNotification
-    Write-Host "`nDone. Open a new shell to pick up the persisted changes." -ForegroundColor Cyan
-} else {
-    Write-Output "`nDone. Process-scoped changes are active in the current PowerShell process."
+# Dot-sourcing loads the function without applying or planning anything.
+if ($MyInvocation.InvocationName -ne '.') {
+    $adapter = @{
+        Read = { param($Name) [Environment]::GetEnvironmentVariable($Name, 'Process') }
+        Write = { param($Name, $Value) [Environment]::SetEnvironmentVariable($Name, $Value, 'Process') }
+        Exists = { param($Path) Test-Path -LiteralPath $Path -PathType Leaf }
+        Identity = {
+            $verifier = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'common_dev\v2\Test-LocalMachineIdentity.ps1'
+            if (-not (Test-Path -LiteralPath $verifier -PathType Leaf)) {
+                throw 'Installed local identity verifier is missing.'
+            }
+            & $verifier
+        }
+    }
+    Invoke-VcpkgEnvironment -Mode $Mode -Scope $Scope -SharedRoot $SharedRoot `
+        -ReplaceBinarySources:$ReplaceBinarySources -DisableMetrics:$DisableMetrics -Adapter $adapter
 }

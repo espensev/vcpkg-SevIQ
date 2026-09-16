@@ -1,132 +1,113 @@
-# VCPKG Environment
+# VCPKG environment
 
-This note documents a machine-level Windows native build setup for CMake projects that use MSVC, Ninja, and `vcpkg`.
+`Set-VcpkgEnv.ps1` plans or validates the caller's Process environment by default.
+Explicit `-Mode Apply` sets a small set of process variables after verifying the
+installed local machine identity. It does not persist environment values.
 
-## Installed Location
+## Plan, validate, apply
 
-On this machine, `vcpkg` lives at:
-
-- `D:\Development\vcpkg-SevIQ`
-
-The expected toolchain file is:
-
-- `D:\Development\vcpkg-SevIQ\scripts\buildsystems\vcpkg.cmake`
-
-## Setup Command
-
-Use the repo script to bootstrap `vcpkg.exe` if needed and persist the expected environment.
-
-Machine scope:
+Run these commands in the PowerShell session that will run the build:
 
 ```powershell
-pwsh -File .\Set-VcpkgEnv.ps1 -Scope Machine -DisableMetrics
+# Read-only: inspect intended values and differences.
+$plan = & .\Set-VcpkgEnv.ps1
+$plan.Changes | Format-Table
+
+# Read-only: IsValid is false for drift or a missing canonical toolchain.
+$validation = & .\Set-VcpkgEnv.ps1 -Mode Validate
+$validation.IsValid
+
+# Explicit mutation: caller Process only, including optional metrics opt-out.
+$receipt = & .\Set-VcpkgEnv.ps1 -Mode Apply -DisableMetrics
 ```
 
-User scope:
+`-Scope Process` is the only supported scope and is the default. `-Scope User`
+and `-Scope Machine` fail closed in every mode; persistent configuration belongs
+to a separately reviewed environment owner. There is no administrator mode.
 
-```powershell
-pwsh -File .\Set-VcpkgEnv.ps1 -Scope User -DisableMetrics
-```
+Use `&` in the current shell for Apply. Starting `pwsh -File` or
+`powershell -File` changes only that child process; its parent cannot inherit
+those changes. Dot-sourcing loads the implementation function for testing and
+performs no setup.
 
-The script also prioritizes CMake and Ninja on `PATH`. It prefers CMake from
-`Program Files` and Ninja from Visual Studio (resolved through `vswhere`), then
-falls back to compatible vcpkg-acquired tools under `downloads\tools`.
+## Values and prerequisites
 
-When `SND_SQ_Shared` is available, the script also creates and uses the shared
-binary cache at `SND_SQ_Shared\caches\vcpkg\binary`. The local vcpkg checkout,
-`installed`, `buildtrees`, `packages`, and `downloads` directories remain on the
-machine. Use `-SharedRoot <absolute-path>` to override the discovered shared
-root, or `-Scope Process` for a non-persistent test run.
+The caller must have an absolute `MACHINE_CODE_ROOT`. The canonical vcpkg root
+is its `Development\vcpkg-SevIQ` child, independent of the script's location or
+a temporary worktree. Apply requires that root's
+`scripts\buildsystems\vcpkg.cmake` file to exist.
 
-## Environment Variables
+| Variable | Intended Process value |
+|---|---|
+| `VCPKG_ROOT` | `<MACHINE_CODE_ROOT>\Development\vcpkg-SevIQ` |
+| `CMAKE_TOOLCHAIN_FILE` | `<VCPKG_ROOT>\scripts\buildsystems\vcpkg.cmake` |
+| `VCPKG_DEFAULT_TRIPLET` | `x64-windows` |
+| `VCPKG_DISABLE_METRICS` | `1`, only with `-DisableMetrics`; otherwise preserved |
+| `VCPKG_BINARY_SOURCES` | Configured only with explicit `-SharedRoot`; otherwise preserved |
 
-| Variable | Value | Status | Purpose |
-|---|---|---|---|
-| `VCPKG_ROOT` | `D:\Development\vcpkg-SevIQ` | recommended | standard machine-level reference to the local `vcpkg` tree |
-| `CMAKE_TOOLCHAIN_FILE` | `D:\Development\vcpkg-SevIQ\scripts\buildsystems\vcpkg.cmake` | required for manual CMake | integrates `vcpkg` with CMake |
-| `PATH` | include `D:\Development\vcpkg-SevIQ` | recommended | makes `vcpkg.exe` available from any shell |
-| `PATH` | include the resolved CMake and Ninja directories | recommended | prioritizes the installed tools, with vcpkg-acquired fallbacks when needed |
-| `VCPKG_DEFAULT_TRIPLET` | `x64-windows` | optional | useful default for manual `vcpkg` commands |
-| `VCPKG_BINARY_SOURCES` | `clear;files,<shared-root>\caches\vcpkg\binary,readwrite;default,readwrite` | recommended | reuses ABI-compatible packages across machines while retaining the normal local cache |
+Apply resolves `common_dev\v2\Test-LocalMachineIdentity.ps1` from the Windows
+LocalApplicationData known folder. It requires exactly one `VERIFIED` result
+for machine `snd-desk`, instance `ca96d510-7d87-4cec-8e1a-bd8fc3866903`.
+Missing, failed, or mismatched verification stops before environment writes.
+Plan and Validate do not invoke the verifier or perform writes.
 
-`vcpkg.exe` being on `PATH` is recommended because many shells do not inherit the same startup environment, and ad-hoc troubleshooting is easier when `vcpkg` is directly callable.
+## Optional shared binary cache
 
-## Shared Root Layout
-
-The shared root is a general store rather than a vcpkg installation:
+An explicit absolute shared root opts in to this configuration:
 
 ```text
-<shared-root>\
-├── caches\
-│   └── vcpkg\
-│       └── binary\
-├── artifacts\
-└── exchange\
+clear;files,<SharedRoot>\caches\vcpkg\binary,readwrite;default,readwrite
 ```
-
-- `caches` contains disposable, reproducible caches namespaced by tool.
-- `artifacts` is reserved for named, versioned build outputs.
-- `exchange` is reserved for temporary cross-machine transfers.
-
-Do not put active Git checkouts, credentials, `installed`, `buildtrees`, or
-other concurrently mutated build directories in the shared root.
-
-## Required Tools
-
-- Visual Studio with the C++ toolchain and Windows SDK
-- CMake
-- Ninja
-- `vcpkg`
-
-## Practical Rule
-
-Do not assume a shell already has your expected environment loaded.
-
-A reliable Windows-native build flow should explicitly do these steps:
-
-- locate Visual Studio with `vswhere`
-- import the MSVC environment through `VsDevCmd.bat`
-- set `VCPKG_ROOT`
-- set or pass `CMAKE_TOOLCHAIN_FILE`
-- resolve `Ninja`
-- run `cmake -S ... -B ...`
-- run `cmake --build ...`
-
-That approach is more reliable than depending on a pre-opened Developer PowerShell or user-specific shell startup configuration.
-
-## Generic Manual Configure Example
 
 ```powershell
-cmake -S <repo-root> `
-      -B <repo-root>\out\build\x64-debug `
-      -G Ninja `
-      -DCMAKE_BUILD_TYPE=Debug `
-      -DCMAKE_TOOLCHAIN_FILE=D:\Development\vcpkg-SevIQ\scripts\buildsystems\vcpkg.cmake
+$plan = & .\Set-VcpkgEnv.ps1 -SharedRoot $chosenSharedRoot
+$receipt = & .\Set-VcpkgEnv.ps1 -Mode Apply -SharedRoot $chosenSharedRoot
 ```
 
-## Generic Manual Build Example
+There is no automatic `SND_SQ_Shared` lookup. The script never creates the cache
+directory or checks share access. Provision and authorize storage separately;
+a subsequent vcpkg invocation can write to the configured cache. Commas,
+semicolons, and backticks are rejected because they delimit or escape vcpkg
+binary-source fields.
+
+A different nonempty `VCPKG_BINARY_SOURCES` fails before mutation unless
+`-ReplaceBinarySources` is also supplied with `-SharedRoot`. An already matching
+value requires no replacement option. Review the Plan with the same options
+before Apply.
+
+## Results and boundaries
+
+Plan and Validate return `Mode`, `Scope`, `IsValid`, `Identity`, `Changes`, and
+`Errors`. `IsValid` checks the selected variables and canonical toolchain only;
+it is not a build-tool installation check. Drift is returned as data, not a
+nonzero shell exit code. Invalid arguments and Apply failures throw.
+
+A successful Apply returns an in-memory receipt with verified identity and one
+change row per selected variable. Each row records `Scope`, `Name`, `Before`,
+`After`, and `Changed`. `Before` is null when absent and `[redacted]` otherwise;
+arbitrary previous environment values are never returned. `After` is the
+intended value, confirmed by readback. No receipt file is written. Repeating
+Apply still verifies identity but skips values that already match. A write or
+readback failure throws; earlier Process changes may remain, so no successful
+receipt is returned for a partial application.
+
+The script does not bootstrap vcpkg, discover downloaded tools, edit any PATH,
+broadcast environment changes, or create directories. Install vcpkg and build
+tools through their owners. Configure CMake and Ninja explicitly and import the
+Visual Studio developer environment as required by the consuming build.
+
+Existing User/Machine values, stale PATH entries, and previously created cache
+directories are outside this writer's cleanup scope. This change does not
+migrate or remove them. Persistent relocation and cleanup require separate
+reviewed work.
+
+## Verification
 
 ```powershell
-cmake --build <repo-root>\out\build\x64-debug
+pwsh -NoProfile -File .\scripts\seviq\Test-SetVcpkgEnv.ps1
+powershell -NoProfile -File .\scripts\seviq\Test-SetVcpkgEnv.ps1
 ```
 
-## Suggested Build Script Behavior
-
-If a repo has a build helper such as `build.ps1`, it should preferably:
-
-- accept a configurable `VcpkgRoot`
-- compute the toolchain file from that root
-- import the Visual Studio environment itself
-- locate `Ninja` instead of assuming it is already on `PATH`
-- pass the toolchain file into CMake explicitly
-- avoid depending on the caller to launch from a special shell first
-
-## Common Failure Modes
-
-- `VCPKG_ROOT` points at the wrong directory
-- `CMAKE_TOOLCHAIN_FILE` is missing or wrong
-- `Ninja` is not installed or not discoverable
-- `CMAKE_C_COMPILER` or `CMAKE_CXX_COMPILER` is unset
-- standard headers like `string.h` or `stddef.h` are missing
-
-Missing standard headers usually means the Visual Studio developer environment was not imported correctly.
+The harness runs Apply against in-memory environment and identity adapters,
+then exercises public Plan and Validate read-only. It does not run live Apply,
+bootstrap tools, or create a cache.
