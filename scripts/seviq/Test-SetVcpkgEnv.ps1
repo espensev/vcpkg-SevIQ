@@ -42,7 +42,7 @@ $f = New-Fixture
 $p = Invoke-VcpkgEnvironment -Adapter $f.Adapter
 Assert-True ($p.Mode -eq 'Plan' -and $p.Scope -eq 'Process') 'default is Process Plan'
 Assert-True ($p.Changes.Count -eq 3 -and -not $p.IsValid) 'plan reports three differences'
-Assert-True ($p.Changes[0].After -eq 'C:\fixture-code\Development\vcpkg-SevIQ') 'canonical root ignores script/worktree location'
+Assert-True ($p.Changes[0].After -eq 'C:\fixture-code\Devtools\vendor\vcpkg-SevIQ') 'canonical root ignores script/worktree location'
 Assert-True ($f.State.Writes.Count -eq 0 -and $f.State.IdentityCalls -eq 0) 'Plan is read-only'
 Assert-True (-not ($p.Changes.Name -contains 'VCPKG_BINARY_SOURCES')) 'legacy shared-root fallback ignored'
 $v = Invoke-VcpkgEnvironment -Mode Validate -Adapter $f.Adapter

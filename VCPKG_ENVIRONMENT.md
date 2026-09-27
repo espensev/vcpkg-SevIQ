@@ -33,13 +33,13 @@ performs no setup.
 ## Values and prerequisites
 
 The caller must have an absolute `MACHINE_CODE_ROOT`. The canonical vcpkg root
-is its `Development\vcpkg-SevIQ` child, independent of the script's location or
+is its `Devtools\vendor\vcpkg-SevIQ` child, independent of the script's location or
 a temporary worktree. Apply requires that root's
 `scripts\buildsystems\vcpkg.cmake` file to exist.
 
 | Variable | Intended Process value |
 |---|---|
-| `VCPKG_ROOT` | `<MACHINE_CODE_ROOT>\Development\vcpkg-SevIQ` |
+| `VCPKG_ROOT` | `<MACHINE_CODE_ROOT>\Devtools\vendor\vcpkg-SevIQ` |
 | `CMAKE_TOOLCHAIN_FILE` | `<VCPKG_ROOT>\scripts\buildsystems\vcpkg.cmake` |
 | `VCPKG_DEFAULT_TRIPLET` | `x64-windows` |
 | `VCPKG_DISABLE_METRICS` | `1`, only with `-DisableMetrics`; otherwise preserved |
@@ -113,3 +113,26 @@ powershell -NoProfile -File .\scripts\seviq\Test-SetVcpkgEnv.ps1
 The harness runs Apply against in-memory environment and identity adapters,
 then exercises public Plan and Validate read-only. It does not run live Apply,
 bootstrap tools, or create a cache.
+
+## Shared distribution and other clients
+
+The shared collection is
+`Join-Path $env:pCloudShared 'Resources\Development\vcpkg-SevIQ'`.
+It holds versioned source bundles and client instructions. Each client clones
+and bootstraps on local storage, selects its own target and host triplets, and
+uses its own compiler, SDK, build directories and binary cache.
+
+Use [VCPKG_DISTRIBUTION.md](VCPKG_DISTRIBUTION.md) for installation, toolset
+selection, updates and publication. The separate
+`scripts/seviq/Set-VcpkgClientEnv.ps1` helper accepts an explicit local checkout
+and explicit triplets. The snd-desk helper above retains its identity guard.
+
+The optional `-SharedRoot` cache setting above is for separately provisioned
+storage; do not point it at pCloud. The shared-area policy keeps live caches,
+installations and Git working trees local.
+
+Older full snapshots under
+`Join-Path $env:pCloudDrive 'ToolRoot\Portable\Development\vcpkg-SevIQ'`
+are retained as machine recovery captures. Their installed packages, downloaded
+tools and build trees do not establish compatibility with another client or
+toolset. Use the new source bundles for cross-machine distribution.

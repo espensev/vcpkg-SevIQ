@@ -34,7 +34,7 @@ function Invoke-VcpkgEnvironment {
     if ([string]::IsNullOrWhiteSpace($codeRoot) -or $codeRoot -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)') {
         throw 'MACHINE_CODE_ROOT must contain an absolute code-volume root in the caller Process environment.'
     }
-    $root = [IO.Path]::GetFullPath((Join-Path $codeRoot 'Development\vcpkg-SevIQ'))
+    $root = [IO.Path]::GetFullPath((Join-Path $codeRoot 'Devtools\vendor\vcpkg-SevIQ'))
     $toolchain = Join-Path $root 'scripts\buildsystems\vcpkg.cmake'
     $desired = [ordered]@{
         VCPKG_ROOT = $root
